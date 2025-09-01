@@ -1,7 +1,7 @@
 {
   "name": "Papel Vegetal",
   "short_name": "Vegetal",
-  "start_url": "./",
+  "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
   "background_color": "#ffffff",
