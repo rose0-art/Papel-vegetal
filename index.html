@@ -1,39 +1,346 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Papel Vegetal</title>
-
-  <!-- Manifest -->
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>TraceAR – Traçar com a Câmera</title>
   <link rel="manifest" href="manifest.json">
-
-  <!-- Estilo simples -->
+  <meta name="theme-color" content="#000000">
   <style>
-    body {
-      font-family: Arial, sans-serif;
-      text-align: center;
-      padding: 20px;
-      background: #fafafa;
+    :root{
+      --panel-bg: rgba(15,15,20,.6);
+      --panel-border: rgba(255,255,255,.12);
+      --text: #fff;
+      --accent: #7dd3fc;
+      --danger: #fb7185;
+      --ok: #34d399;
     }
-    h1 {
-      color: #0077ff;
+    *{ box-sizing: border-box }
+    html, body{ height: 100%; background:#000; margin:0; }
+    body{ font-family: system-ui, sans-serif; color:var(--text); }
+    #camera{ position:fixed; inset:0; width:100%; height:100%; object-fit:cover; background:#000; }
+    #grid{ position:fixed; inset:0; pointer-events:none; display:none;
+      background-image:
+        linear-gradient(to right, rgba(255,255,255,.08) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(255,255,255,.08) 1px, transparent 1px);
+      background-size: 10vw 10vw;
     }
-    p {
-      font-size: 18px;
+    #overlay{
+      position:fixed; inset:0; margin:auto; max-width:90vmin; max-height:90vmin;
+      transform-origin:center center;
+      transform: translate3d(var(--tx,0px), var(--ty,0px), 0) scale(var(--scale,1)) rotate(var(--rot,0deg));
+      opacity: var(--opacity, .5);
+      filter: var(--filter, none);
+      touch-action:none;
+      display:none;
     }
+    #panel{
+      position:fixed; left:0; right:0; bottom:0; padding:12px; display:flex; gap:10px; flex-wrap:wrap; align-items:center; justify-content:center;
+      background: var(--panel-bg); backdrop-filter: blur(6px); border-top:1px solid var(--panel-border);
+    }
+    #panel .group{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+    label{ font-size:.85rem; opacity:.9 }
+    input[type="range"]{ width: 140px; }
+    .btn{
+      appearance:none; border:1px solid var(--panel-border); background:rgba(255,255,255,.04); color:var(--text); padding:8px 10px; border-radius:12px; font-size:.9rem; cursor:pointer;
+    }
+    .btn:active{ transform: translateY(1px) }
+    .btn.ok{ border-color: rgba(52,211,153,.4) }
+    .btn.locked{ border-color: rgba(251,113,133,.6); background:rgba(251,113,133,.1) }
+    #toast{ position:fixed; top:12px; left:50%; transform:translateX(-50%); background:var(--panel-bg); padding:8px 12px; border-radius:10px; border:1px solid var(--panel-border); display:none }
+    
+    /* Modal para URL */
+    #urlModal{ position:fixed; inset:0; background:rgba(0,0,0,.8); display:none; align-items:center; justify-content:center; z-index:1000; }
+    #urlModal .modal-content{ background:var(--panel-bg); padding:20px; border-radius:12px; border:1px solid var(--panel-border); width:90%; max-width:400px; }
+    #urlModal input{ width:100%; padding:10px; margin:10px 0; background:rgba(255,255,255,.1); border:1px solid var(--panel-border); border-radius:8px; color:var(--text); }
+    #urlModal .modal-buttons{ display:flex; gap:10px; justify-content:flex-end; margin-top:15px; }
   </style>
 </head>
 <body>
-  <h1>🚀 Papel Vegetal</h1>
-  <p>Meu aplicativo PWA está funcionando!</p>
-  <p>Você pode instalar este app e usar offline.</p>
+  <video id="camera" autoplay playsinline></video>
+  <div id="grid"></div>
+  <img id="overlay" alt="Overlay para traço" />
+
+  <div id="panel">
+    <div class="group">
+      <label class="btn" for="file">Carregar</label>
+      <input id="file" type="file" accept="image/*" hidden />
+      <button id="loadUrl" class="btn">URL</button>
+    </div>
+    <div class="group">
+      <label for="opacity">Opacidade</label>
+      <input id="opacity" type="range" min="0" max="1" step="0.02" value="0.5" />
+    </div>
+    <div class="group">
+      <button id="toggleGrid" class="btn">Grade</button>
+      <button id="mirror" class="btn">Espelho</button>
+      <button id="edge" class="btn">Contornos</button>
+      <button id="invert" class="btn">Inverter Cor</button>
+      <button id="torch" class="btn">Luz</button>
+      <button id="lock" class="btn">Travar</button>
+      <button id="reset" class="btn">Reset</button>
+    </div>
+    <div class="group">
+      <button id="rotLeft" class="btn">↺ 90°</button>
+      <button id="rotRight" class="btn">↻ 90°</button>
+    </div>
+  </div>
+  <div id="toast"></div>
+
+  <!-- Modal para inserir URL -->
+  <div id="urlModal">
+    <div class="modal-content">
+      <h3 style="margin:0 0 15px 0">Carregar imagem por URL</h3>
+      <input type="url" id="urlInput" placeholder="https://exemplo.com/imagem.jpg" />
+      <div class="modal-buttons">
+        <button id="cancelUrl" class="btn">Cancelar</button>
+        <button id="confirmUrl" class="btn ok">Carregar</button>
+      </div>
+    </div>
+  </div>
 
   <script>
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('service-worker.js')
-        .then(() => console.log("✅ Service Worker registrado"))
-        .catch((err) => console.log("❌ Erro no Service Worker:", err));
+    const $ = s => document.querySelector(s);
+    const toast = (m, ms=1200) => {const t=$('#toast');t.textContent=m;t.style.display='block';clearTimeout(t._h);t._h=setTimeout(()=>t.style.display='none',ms)};
+
+    async function startCamera(){
+      try{
+        const stream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:{ideal:'environment'} } });
+        $('#camera').srcObject = stream;
+      }catch(e){ toast('Erro câmera'); }
+    }
+    startCamera();
+
+    const state={
+      tx:0,ty:0,scale:1,rot:0,mirror:1,filter:'none',opacity:0.5,
+      locked:false // Novo estado para travar imagem
+    };
+    const overlay=$('#overlay');
+    
+    function apply(){
+      overlay.style.transform=`translate3d(${state.tx}px,${state.ty}px,0) scale(${state.scale}) rotate(${state.rot}deg) ${state.mirror===-1?'scaleX(-1)':''}`;
+      overlay.style.filter=state.filter;
+      overlay.style.opacity=state.opacity;
+    }
+
+    // Função para carregar imagem (usada tanto por arquivo quanto por URL)
+    function loadImage(src){
+      overlay.src = src;
+      overlay.onload = () => {
+        overlay.style.display = 'block';
+        apply();
+        toast('Imagem carregada');
+      };
+      overlay.onerror = () => {
+        toast('Erro ao carregar imagem');
+      };
+    }
+
+    // Upload imagem por arquivo
+    $('#file').addEventListener('change',e=>{
+      const f=e.target.files[0];
+      if(!f)return;
+      loadImage(URL.createObjectURL(f));
+    });
+
+    // Upload imagem por URL
+    $('#loadUrl').addEventListener('click',()=>{
+      $('#urlModal').style.display = 'flex';
+      $('#urlInput').focus();
+    });
+
+    $('#cancelUrl').addEventListener('click',()=>{
+      $('#urlModal').style.display = 'none';
+      $('#urlInput').value = '';
+    });
+
+    $('#confirmUrl').addEventListener('click',()=>{
+      const url = $('#urlInput').value.trim();
+      if(!url){
+        toast('Digite uma URL');
+        return;
+      }
+      
+      // Validação básica de URL
+      try{
+        new URL(url);
+        loadImage(url);
+        $('#urlModal').style.display = 'none';
+        $('#urlInput').value = '';
+      }catch(e){
+        toast('URL inválida');
+      }
+    });
+
+    // Fechar modal com ESC
+    document.addEventListener('keydown',(e)=>{
+      if(e.key === 'Escape' && $('#urlModal').style.display === 'flex'){
+        $('#urlModal').style.display = 'none';
+        $('#urlInput').value = '';
+      }
+    });
+
+    // Travar/Destravar imagem
+    $('#lock').addEventListener('click',()=>{
+      state.locked = !state.locked;
+      $('#lock').classList.toggle('locked', state.locked);
+      $('#lock').textContent = state.locked ? 'Destravar' : 'Travar';
+      
+      // Habilita/desabilita controles quando travado
+      const controls = ['#opacity', '#toggleGrid', '#mirror', '#edge', '#invert', '#rotLeft', '#rotRight'];
+      controls.forEach(selector => {
+        const el = $(selector);
+        if(el) el.disabled = state.locked;
+      });
+      
+      toast(state.locked ? 'Imagem travada' : 'Imagem destravada');
+    });
+
+    // Controles
+    $('#opacity').addEventListener('input',e=>{
+      if(state.locked) return;
+      state.opacity=parseFloat(e.target.value);
+      apply();
+    });
+    
+    $('#toggleGrid').addEventListener('click',()=>{
+      if(state.locked) return;
+      $('#grid').style.display=$('#grid').style.display==='block'?'none':'block'
+    });
+    
+    $('#mirror').addEventListener('click',()=>{
+      if(state.locked) return;
+      state.mirror*=-1;
+      apply();
+    });
+    
+    $('#edge').addEventListener('click',()=>{
+      if(state.locked) return;
+      state.filter = state.filter.includes("grayscale") ? 'none' : 'grayscale(1) contrast(2) brightness(1.1)';
+      apply();
+    });
+    
+    $('#invert').addEventListener('click',()=>{
+      if(state.locked) return;
+      state.filter = state.filter.includes("invert") ? state.filter.replace(" invert(1)","") : (state.filter==="none"?"invert(1)":state.filter+" invert(1)");
+      apply();
+    });
+    
+    $('#reset').addEventListener('click',()=>{
+      if(state.locked) return;
+      state.tx=0;state.ty=0;state.scale=1;state.rot=0;state.mirror=1;state.filter='none';state.opacity=0.5;
+      $('#opacity').value=0.5;
+      apply();
+    });
+    
+    $('#rotLeft').addEventListener('click',()=>{
+      if(state.locked) return;
+      state.rot-=90;
+      apply();
+    });
+    
+    $('#rotRight').addEventListener('click',()=>{
+      if(state.locked) return;
+      state.rot+=90;
+      apply();
+    });
+
+    // Torch (lanterna)
+    let torchOn=false;
+    $('#torch').addEventListener('click',async()=>{
+      try{
+        const stream=$('#camera').srcObject;
+        if(!stream) return;
+        const track=stream.getVideoTracks()[0];
+        const caps=track.getCapabilities();
+        if(caps.torch){
+          torchOn=!torchOn;
+          await track.applyConstraints({advanced:[{torch:torchOn}]});
+          toast(torchOn?"Lanterna ligada":"Lanterna desligada");
+        } else toast("Sem suporte a lanterna");
+      }catch(err){toast("Erro lanterna")}
+    });
+
+    // === Gestos de toque (pan, zoom e rotação) ===
+    let lastTouchDist = null;
+    let lastAngle = null;
+    let lastTouchX = null, lastTouchY = null;
+
+    function getTouchDist(touches){
+      if(touches.length < 2) return 0;
+      const dx = touches[0].clientX - touches[1].clientX;
+      const dy = touches[0].clientY - touches[1].clientY;
+      return Math.sqrt(dx*dx + dy*dy);
+    }
+
+    function getTouchAngle(touches){
+      if(touches.length < 2) return 0;
+      const dx = touches[1].clientX - touches[0].clientX;
+      const dy = touches[1].clientY - touches[0].clientY;
+      return Math.atan2(dy, dx) * 180 / Math.PI;
+    }
+
+    overlay.addEventListener('touchstart', e=>{
+      if(state.locked) return;
+      
+      if(e.touches.length === 2){
+        lastTouchDist = getTouchDist(e.touches);
+        lastAngle = getTouchAngle(e.touches);
+      }else if(e.touches.length === 1){
+        lastTouchX = e.touches[0].clientX;
+        lastTouchY = e.touches[0].clientY;
+      }
+    });
+
+    overlay.addEventListener('touchmove', e=>{
+      if(state.locked) return;
+      e.preventDefault();
+
+      if(e.touches.length === 2){
+        // Zoom
+        const newDist = getTouchDist(e.touches);
+        if(lastTouchDist){
+          const delta = newDist / lastTouchDist;
+          state.scale *= delta;
+          if(state.scale < 0.2) state.scale = 0.2;
+          if(state.scale > 10) state.scale = 10;
+        }
+        lastTouchDist = newDist;
+
+        // Rotação
+        const newAngle = getTouchAngle(e.touches);
+        if(lastAngle !== null){
+          const deltaAngle = newAngle - lastAngle;
+          state.rot += deltaAngle;
+        }
+        lastAngle = newAngle;
+
+        apply();
+      }else if(e.touches.length === 1){
+        // Pan
+        const x = e.touches[0].clientX;
+        const y = e.touches[0].clientY;
+        if(lastTouchX !== null && lastTouchY !== null){
+          state.tx += x - lastTouchX;
+          state.ty += y - lastTouchY;
+          apply();
+        }
+        lastTouchX = x;
+        lastTouchY = y;
+      }
+    });
+
+    overlay.addEventListener('touchend', e=>{
+      if(e.touches.length < 2){
+        lastTouchDist = null;
+        lastAngle = null;
+      }
+      if(e.touches.length === 0){ lastTouchX=null; lastTouchY=null; }
+    });
+
+    // PWA service worker
+    if('serviceWorker' in navigator){
+      navigator.serviceWorker.register('service-worker.js');
     }
   </script>
 </body>
